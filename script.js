@@ -441,13 +441,14 @@
     const layoutMode = els.layoutMode?.value || "VERTICAL";
     const isHorizontal = layoutMode === "HORIZONTAL";
 
-    // Compute positions
-    const placed = new Map(); // stableKey -> {x,y,node}
-    const edges = [];         // {sourceKey,targetKey}
+    // Build edges (after collapse is applied)
+    const edges = [];
+    walk(root, (n) => {
+      (n.children || []).forEach((c) => edges.push({ sourceKey: n.__stableKey, targetKey: c.__stableKey }));
+    });
 
-    // Root anchor
-    const origin = { x: 0, y: 0 };
-    layoutRecursive(root, origin.x, origin.y, isHorizontal, placed, edges);
+    // Compute positions with a tidy tree for hierarchy nodes + side-object fan-out
+    const placed = computePositions(root, isHorizontal);
 
     // Render
     rootG.selectAll("*").remove();
@@ -664,78 +665,95 @@
     });
   }
 
-  // ---------- Custom layout (key change) ----------
-  // Rule:
-  // - Vertical: hierarchy children go DOWN, side objects go RIGHT
-  // - Horizontal: hierarchy children go RIGHT, side objects go DOWN
-  function layoutRecursive(node, x, y, isHorizontal, placed, edges) {
-    placed.set(node.__stableKey, { x, y, node });
-
-    const kids = (node.children || []).slice();
-
-    // Split only for ACCOUNT nodes:
-    // hierarchyKids = child accounts (ACCOUNT)
-    // sideKids = everything else (contracts, contacts, addresses, billing, platform)
-    let hierarchyKids = kids;
-    let sideKids = [];
-
+  // ---------- Positioning (tidy hierarchy + side fan-out) ----------
+  // Hierarchy rules:
+  // - For ACCOUNT: only child ACCOUNTs are hierarchy children (parentAccountId structure)
+  // - For CUSTOMER / GLOBAL_CUSTOMER: all children are hierarchy (country customers + root accounts)
+  // - For CONTRACT and other side objects: no hierarchy children
+  // Side objects:
+  // - Any remaining children that are NOT hierarchy children are rendered as side objects
+  //   (placed perpendicular to the hierarchy direction).
+  function hierarchyChildren(node) {
+    if (!node) return [];
     if (node.__type === "ACCOUNT") {
-      hierarchyKids = kids.filter(k => k.__type === "ACCOUNT");
-      sideKids = kids.filter(k => k.__type !== "ACCOUNT");
-    } else {
-      // For non-account nodes: keep simple hierarchy
-      hierarchyKids = kids;
-      sideKids = [];
+      return (node.children || []).filter((c) => c.__type === "ACCOUNT");
     }
+    if (node.__type === "CUSTOMER" || node.__type === "GLOBAL_CUSTOMER") {
+      return (node.children || []);
+    }
+    return [];
+  }
 
-    // Create edges for all direct kids
-    kids.forEach(k => edges.push({ sourceKey: node.__stableKey, targetKey: k.__stableKey }));
+  function sideChildren(node) {
+    const hier = new Set(hierarchyChildren(node).map((c) => c.__stableKey));
+    return (node.children || []).filter((c) => !hier.has(c.__stableKey));
+  }
 
-    // Hierarchy placement
-    if (hierarchyKids.length) {
-      const total = hierarchyKids.length;
+  function computePositions(root, isHorizontal) {
+    const placed = new Map(); // stableKey -> {x,y,node}
+
+    // 1) Place hierarchy nodes with a tidy tree (prevents overlaps)
+    const h = d3.hierarchy(root, (d) => hierarchyChildren(d));
+
+    // Spacing tuned for CARD_W/CARD_H
+    const dx = CARD_W + 120; // sibling spacing
+    const dy = CARD_H + 160; // level spacing
+
+    const tree = d3.tree().nodeSize([dx, dy]);
+    tree(h);
+
+    // d3.tree uses x (horizontal) and y (depth). We rotate if horizontal mode is selected.
+    h.descendants().forEach((hn) => {
+      const n = hn.data;
+      const x = isHorizontal ? hn.y : hn.x;
+      const y = isHorizontal ? hn.x : hn.y;
+      placed.set(n.__stableKey, { x, y, node: n });
+    });
+
+    // 2) Place side objects for ANY placed node (ACCOUNT side objects, CONTRACT children, etc.)
+    //    We do BFS: when we place a side node, it becomes eligible to place its own side children.
+    const queue = Array.from(placed.values()).map((v) => v.node);
+    const seen = new Set(queue.map((n) => n.__stableKey));
+
+    while (queue.length) {
+      const parent = queue.shift();
+      const p = placed.get(parent.__stableKey);
+      if (!p) continue;
+
+      const kids = sideChildren(parent);
+      if (!kids.length) continue;
+
+      const total = kids.length;
       const start = -(total - 1) / 2;
 
-      hierarchyKids.forEach((k, idx) => {
+      kids.forEach((k, idx) => {
         const t = start + idx;
 
-        // main axis step
-        const mainDx = isHorizontal ? (GAP_MAIN + CARD_W) : 0;
-        const mainDy = isHorizontal ? 0 : (GAP_MAIN + CARD_H);
-
-        // spread on cross axis slightly so siblings don't overlap
-        const crossDx = isHorizontal ? 0 : t * (CARD_W + 60);
-        const crossDy = isHorizontal ? t * (CARD_H + 52) : 0;
-
-        const nx = x + mainDx + crossDx;
-        const ny = y + mainDy + crossDy;
-
-        layoutRecursive(k, nx, ny, isHorizontal, placed, edges);
-      });
-    }
-
-    // Side objects placement (only for ACCOUNT nodes)
-    if (sideKids.length) {
-      const total = sideKids.length;
-      const start = -(total - 1) / 2;
-
-      sideKids.forEach((k, idx) => {
-        const t = start + idx;
-
-        // side axis offset (right in vertical; down in horizontal)
+        // Perpendicular fan-out:
+        // - Vertical mode: hierarchy goes DOWN => side goes RIGHT and stacks vertically
+        // - Horizontal mode: hierarchy goes RIGHT => side goes DOWN and stacks horizontally
         const sideDx = isHorizontal ? 0 : OFFSET_SIDE;
         const sideDy = isHorizontal ? OFFSET_SIDE : 0;
 
-        // stack side children along side "cross" dimension
-        const stackDx = isHorizontal ? t * (CARD_W + 58) : 0;
-        const stackDy = isHorizontal ? 0 : t * (CARD_H + 50);
+        const stackDx = isHorizontal ? t * (CARD_W + 70) : 0;
+        const stackDy = isHorizontal ? 0 : t * (CARD_H + 60);
 
-        const nx = x + sideDx + stackDx;
-        const ny = y + sideDy + stackDy;
+        const nx = p.x + sideDx + stackDx;
+        const ny = p.y + sideDy + stackDy;
 
-        layoutRecursive(k, nx, ny, isHorizontal, placed, edges);
+        // If already placed (shouldn't happen often), nudge slightly to avoid collisions
+        const key = k.__stableKey;
+        if (!placed.has(key)) {
+          placed.set(key, { x: nx, y: ny, node: k });
+          if (!seen.has(key)) {
+            seen.add(key);
+            queue.push(k);
+          }
+        }
       });
     }
+
+    return placed;
   }
 
   // ---------- Zoom-to-fit ----------
@@ -761,7 +779,7 @@
       return;
     }
 
-    const pad = 140;
+    const pad = 90;
     const scale = Math.min(vw / (bbox.width + pad), vh / (bbox.height + pad), 2.0) * 1.08;
     const tx = vw / 2 - (bbox.x + bbox.width / 2) * scale;
     const ty = vh / 2 - (bbox.y + bbox.height / 2) * scale;
