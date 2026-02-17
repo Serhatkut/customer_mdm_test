@@ -690,24 +690,73 @@
   }
 
   function computePositions(root, isHorizontal) {
-    const placed = new Map(); // stableKey -> {x,y,node}
-
     // 1) Place hierarchy nodes with a tidy tree (prevents overlaps)
+    // Use a placed map with kind field
+    const placed = new Map(); // stableKey -> {x,y,node,kind: 'HIER'|'SIDE'}
+
     const h = d3.hierarchy(root, (d) => hierarchyChildren(d));
 
-    // Spacing tuned for CARD_W/CARD_H
-    const dx = CARD_W + 120; // sibling spacing
-    const dy = CARD_H + 160; // level spacing
+    // Spacing tuned for CARD_W/CARD_H -- increased for less crowding
+    const dx = CARD_W + 150; // sibling spacing
+    const dy = CARD_H + 190; // level spacing
 
     const tree = d3.tree().nodeSize([dx, dy]);
     tree(h);
+
+    // Helper for collision avoidance
+    const PAD_X = 30;
+    const PAD_Y = 24;
+
+    function overlapsAny(x, y, ignoreKey = null) {
+      for (const [k, v] of placed.entries()) {
+        if (ignoreKey && k === ignoreKey) continue;
+        const dx = Math.abs(v.x - x);
+        const dy = Math.abs(v.y - y);
+        if (dx < (CARD_W + PAD_X) && dy < (CARD_H + PAD_Y)) return true;
+      }
+      return false;
+    }
+
+    function placeWithNudge(key, x, y, node, kind, prefer) {
+      // prefer: 'SIDE' or 'HIER' determines primary nudge direction
+      let nx = x;
+      let ny = y;
+
+      // Step sizes are chosen to clear card bounds + padding.
+      const stepMain = (prefer === "HIER")
+        ? (isHorizontal ? (CARD_W + 160) : (CARD_H + 200))
+        : (isHorizontal ? (CARD_H + 140) : (CARD_W + 220));
+
+      const stepAlt = isHorizontal ? (CARD_W + 80) : (CARD_H + 80);
+
+      let guard = 0;
+      while (overlapsAny(nx, ny) && guard++ < 80) {
+        if (prefer === "HIER") {
+          // push along hierarchy axis
+          if (isHorizontal) nx += stepMain;
+          else ny += stepMain;
+        } else {
+          // push further along side axis
+          if (isHorizontal) ny += stepMain;
+          else nx += stepMain;
+        }
+
+        // If still overlaps too much, add a small perpendicular drift
+        if (guard % 4 === 0) {
+          if (isHorizontal) nx += (guard % 8 === 0 ? stepAlt : -stepAlt);
+          else ny += (guard % 8 === 0 ? stepAlt : -stepAlt);
+        }
+      }
+
+      placed.set(key, { x: nx, y: ny, node, kind });
+    }
 
     // d3.tree uses x (horizontal) and y (depth). We rotate if horizontal mode is selected.
     h.descendants().forEach((hn) => {
       const n = hn.data;
       const x = isHorizontal ? hn.y : hn.x;
       const y = isHorizontal ? hn.x : hn.y;
-      placed.set(n.__stableKey, { x, y, node: n });
+      placed.set(n.__stableKey, { x, y, node: n, kind: "HIER" });
     });
 
     // 2) Place side objects for ANY placed node (ACCOUNT side objects, CONTRACT children, etc.)
@@ -741,16 +790,23 @@
         const nx = p.x + sideDx + stackDx;
         const ny = p.y + sideDy + stackDy;
 
-        // If already placed (shouldn't happen often), nudge slightly to avoid collisions
         const key = k.__stableKey;
         if (!placed.has(key)) {
-          placed.set(key, { x: nx, y: ny, node: k });
+          placeWithNudge(key, nx, ny, k, "SIDE", "SIDE");
           if (!seen.has(key)) {
             seen.add(key);
             queue.push(k);
           }
         }
       });
+    }
+
+    // Final pass: if any SIDE nodes still collide (e.g., dense contract+billing clusters), nudge them.
+    for (const [k, v] of Array.from(placed.entries())) {
+      if (v.kind !== "SIDE") continue;
+      if (overlapsAny(v.x, v.y, k)) {
+        placeWithNudge(k, v.x, v.y, v.node, v.kind, "SIDE");
+      }
     }
 
     return placed;
