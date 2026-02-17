@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>DHL eCommerce – Customer MDM Scenarios</title>
+  <link rel="stylesheet" href="style.css" />
+  <script src="https://cdn.jsdelivr.net/npm/d3@7/dist/d3.min.js"></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-row topbar-row--primary">
+      <div class="brand">
+        <div class="brand-title">DHL<span>eCommerce</span></div>
+        <div class="brand-sub">Customer Master Data Scenarios</div>
+      </div>
+
+      <div class="actions">
+        <button id="collapseAll" class="btn">Collapse all</button>
+        <button id="expandAll" class="btn">Expand all</button>
+        <button id="resetView" class="btn btn--ghost">Fit to screen</button>
+        <button id="toggleInspector" class="btn btn--ghost">Inspector</button>
+      </div>
+
+      <div class="dq">
+        <span id="dqDot" class="dq-dot"></span>
+        <span id="dqText" class="dq-text">DQ: N/A</span>
+      </div>
+    </div>
+
+    <div class="topbar-row topbar-row--secondary">
+      <div class="controls">
+        <div class="control">
+          <label>Scenario</label>
+          <select id="scenarioSelector"></select>
+        </div>
+
+        <div class="control">
+          <label>Customer type</label>
+          <select id="filterCustomerType"></select>
+        </div>
+
+        <div class="control">
+          <label>Industry</label>
+          <select id="filterIndustry"></select>
+        </div>
+
+        <div class="control">
+          <label>Sales channel</label>
+          <select id="filterSalesChannel"></select>
+        </div>
+
+        <div class="control">
+          <label>Hierarchy</label>
+          <select id="layoutMode">
+            <option value="VERTICAL">Vertical</option>
+            <option value="HORIZONTAL">Horizontal</option>
+          </select>
+        </div>
+
+        <button id="clearFilters" class="btn btn--ghost">Clear</button>
+      </div>
+    </div>
+  </header>
+
+  <main class="layout">
+    <section class="canvas">
+      <div id="viz" class="viz"></div>
+    </section>
+
+    <aside id="inspector" class="inspector">
+      <div class="inspector-header">
+        <div class="inspector-title">Selected object</div>
+        <div id="classificationPills" class="pills"></div>
+      </div>
+
+      <div id="meaningBox" class="meaning"></div>
+
+      <div class="inspector-block">
+        <div class="block-title">Key attributes</div>
+        <div id="objectSummary" class="kv"></div>
+      </div>
+
+      <div class="inspector-block">
+        <div class="block-title">Readable view</div>
+        <div id="readableJson" class="readable"></div>
+      </div>
+
+      <div class="inspector-block">
+        <div class="block-title">Raw JSON</div>
+        <pre id="rawJson" class="raw"></pre>
+      </div>
+    </aside>
+  </main>
+
+  <footer class="footer">
+    <div class="footer-left">
+      <div class="footer-brand">Serhat Kut, PhD</div>
+      <div class="footer-sub">DeC Customer MDM – Scenario Visualizer</div>
+    </div>
+    <div id="legend" class="legend"></div>
+  </footer>
+
+  <script src="script.js"></script>
+</body>
+</html>
