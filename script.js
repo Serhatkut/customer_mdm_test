@@ -832,39 +832,50 @@
 
   function buildAccountSubtree(acc, byParent) {
     const node = makeNode("ACCOUNT", stableKey("ACCOUNT", acc.mdmAccountId), acc.tradingName || acc.mdmAccountId, acc);
+    const pk = node.__stableKey;
 
     // Side objects first (so they become sideKids in layout)
-    (acc.contactPersons || []).forEach((c) => {
-      const nm = `${c.firstName || ""} ${c.lastName || ""}`.trim() || c.contactPersonId;
-      node.children.push(makeNode("CONTACT", stableKey("CONTACT", c.contactPersonId || nm), nm, c));
+    (acc.contactPersons || []).forEach((c, idx) => {
+      const nm = `${c.firstName || ""} ${c.lastName || ""}`.trim() || c.contactPersonId || "Contact";
+      const key = childKey(pk, "CONTACT", c.contactPersonId || nm, idx, c);
+      node.children.push(makeNode("CONTACT", key, nm, c));
     });
 
-    (acc.addresses || []).forEach((a) => {
-      const nm = `${a.addressType || "ADDRESS"} · ${a.city || ""}`.trim();
-      node.children.push(makeNode("ADDRESS", stableKey("ADDRESS", a.addressId || nm), nm, a));
+    (acc.addresses || []).forEach((a, idx) => {
+      const nm = `${a.addressType || "ADDRESS"} · ${a.city || ""}`.trim() || "Address";
+      const key = childKey(pk, "ADDRESS", a.addressId || nm, idx, a);
+      node.children.push(makeNode("ADDRESS", key, nm, a));
     });
 
     if (acc.platformObject) {
       const p = acc.platformObject;
-      node.children.push(makeNode("PLATFORM", stableKey("PLATFORM", p.platformId || p.name || "PLATFORM"), p.name || "Platform", p));
+      const label = p.name || "Platform";
+      const key = childKey(pk, "PLATFORM", p.platformId || p.name || label, 0, p);
+      node.children.push(makeNode("PLATFORM", key, label, p));
     }
 
-    (acc.contracts || []).forEach((c) => {
-      const cn = makeNode("CONTRACT", stableKey("CONTRACT", c.contractId), c.contractName || "Contract", c);
+    (acc.contracts || []).forEach((c, cIdx) => {
+      const cLabel = c.contractName || "Contract";
+      const cKey = childKey(pk, "CONTRACT", c.contractId || cLabel, cIdx, c);
+      const cn = makeNode("CONTRACT", cKey, cLabel, c);
 
       if (c.billingProfile) {
         const b = c.billingProfile;
-        cn.children.push(makeNode("BILLING", stableKey("BILLING", b.billingProfileId || b.billingAccountNumber || "BILLING"), b.billingAccountNumber || "Billing Profile", b));
+        const bLabel = b.billingAccountNumber || "Billing Profile";
+        const bKey = childKey(cKey, "BILLING", b.billingProfileId || b.billingAccountNumber || bLabel, 0, b);
+        cn.children.push(makeNode("BILLING", bKey, bLabel, b));
       }
 
-      (c.contactPersons || []).forEach((cp) => {
-        const nm = `${cp.firstName || ""} ${cp.lastName || ""}`.trim() || cp.contactPersonId;
-        cn.children.push(makeNode("CONTACT", stableKey("CONTACT", cp.contactPersonId || nm), nm, cp));
+      (c.contactPersons || []).forEach((cp, idx) => {
+        const nm = `${cp.firstName || ""} ${cp.lastName || ""}`.trim() || cp.contactPersonId || "Contact";
+        const key = childKey(cKey, "CONTACT", cp.contactPersonId || nm, idx, cp);
+        cn.children.push(makeNode("CONTACT", key, nm, cp));
       });
 
-      (c.addresses || []).forEach((ad) => {
-        const nm = `${ad.addressType || "ADDRESS"} · ${ad.city || ""}`.trim();
-        cn.children.push(makeNode("ADDRESS", stableKey("ADDRESS", ad.addressId || nm), nm, ad));
+      (c.addresses || []).forEach((ad, idx) => {
+        const nm = `${ad.addressType || "ADDRESS"} · ${ad.city || ""}`.trim() || "Address";
+        const key = childKey(cKey, "ADDRESS", ad.addressId || nm, idx, ad);
+        cn.children.push(makeNode("ADDRESS", key, nm, ad));
       });
 
       node.children.push(cn);
@@ -877,7 +888,46 @@
     return node;
   }
 
-  function stableKey(type, id) { return `${type}:${String(id || "").trim()}`; }
+  function stableKey(type, id) {
+    return `${type}:${String(id || "").trim()}`;
+  }
+
+  // Ensures uniqueness even when source objects are missing IDs (common for contacts/addresses/platforms).
+  // Deterministic: same parent + same preferredId + same idx => same key.
+  function childKey(parentStableKey, type, preferredId, idx, raw) {
+    const base = String(preferredId || "").trim();
+    if (base) return `${type}:${base}@${parentStableKey}#${idx}`;
+
+    // Fallback: create a compact signature from common fields (still deterministic)
+    const sig = [
+      raw?.mdmAccountId,
+      raw?.mdmCustomerId,
+      raw?.contactPersonId,
+      raw?.addressId,
+      raw?.billingProfileId,
+      raw?.contractId,
+      raw?.platformId,
+      raw?.name,
+      raw?.officialName,
+      raw?.tradingName,
+      raw?.city,
+      raw?.postalcode,
+      raw?.street,
+      raw?.houseNumber,
+      raw?.firstName,
+      raw?.lastName,
+      raw?.jobTitle,
+      raw?.addressType,
+      raw?.type,
+      raw?.provider,
+    ]
+      .filter((v) => v != null && String(v).trim() !== "")
+      .map((v) => String(v).trim())
+      .join("|")
+      .slice(0, 120);
+
+    return `${type}:__NOID__:${sig}@${parentStableKey}#${idx}`;
+  }
 
   function markDepth(node, d) {
     node.__depth = d;
